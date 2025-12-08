@@ -29,149 +29,143 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<string[]>([]);
   const [isGameStarted, setIsGameStarted] = useState(false);
 
+  // Colores de UI para mapear
+  const colorMap: Record<string, string> = {
+    red: 'bg-red-500', blue: 'bg-blue-500', green: 'bg-green-500', yellow: 'bg-yellow-400'
+  };
+
   useEffect(() => {
-    const log = (m: string) => setMessages(prev => [...prev, m]);
-
-    const handleRoomCreated = (room: Room) => {
-      setCurrentRoom(room);
-      log(`🟢 Sala creada: ${room.id}`);
-    };
-
-    const handleRoomJoined = (room: Room) => {
-      setCurrentRoom(room);
-      log(`🟡 Te uniste a la sala: ${room.id}`);
-    };
+    const log = (m: string) => setMessages(prev => [m, ...prev].slice(0, 10)); // Solo últimos 10
 
     const handleRoomUpdated = (room: Room) => {
-      // eliminar duplicados visuales si los hubiera
-      const unique = room.players.filter(
-        (p, i, arr) => arr.findIndex(x => x.id === p.id) === i
-      );
+      // Filtrar duplicados visuales
+      const unique = room.players.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
       setCurrentRoom({ ...room, players: unique });
     };
 
-    const handleErrorJoining = (msg: string) => log(`❌ ${msg}`);
     const handleGameInitialized = () => {
       setIsGameStarted(true);
-      log('🎮 ¡Iniciando partida!');
-      setTimeout(() => {
-        router.push(`/game/${roomId}?name=${playerName}`);
-      }, 400);
+      setTimeout(() => router.push(`/game/${roomId}?name=${playerName}`), 500);
     };
 
-    const handleMessage = (msg: string) => log(`📢 ${msg}`);
-
-    socket.on('roomCreated', handleRoomCreated);
-    socket.on('roomJoined', handleRoomJoined);
+    socket.on('roomCreated', (r) => { setCurrentRoom(r); log('Sala creada'); });
+    socket.on('roomJoined', (r) => { setCurrentRoom(r); log('Te uniste'); });
     socket.on('roomUpdated', handleRoomUpdated);
-    socket.on('errorJoining', handleErrorJoining);
     socket.on('gameInitialized', handleGameInitialized);
-    socket.on('message', handleMessage);
+    socket.on('message', (m) => log(m));
+    socket.on('errorJoining', (m) => { log(m); alert(m); });
 
-    // Si no es creador, unirse automáticamente
-    if (!isCreator && playerName) {
-      socket.emit('joinRoom', { roomId, playerName });
-    } else if (isCreator && playerName) {
-      socket.emit('createRoom', { roomId, playerName });
-    }
+    if (!isCreator && playerName) socket.emit('joinRoom', { roomId, playerName });
+    else if (isCreator && playerName) socket.emit('createRoom', { roomId, playerName });
 
     return () => {
-      socket.off('roomCreated', handleRoomCreated);
-      socket.off('roomJoined', handleRoomJoined);
-      socket.off('roomUpdated', handleRoomUpdated);
-      socket.off('errorJoining', handleErrorJoining);
-      socket.off('gameInitialized', handleGameInitialized);
-      socket.off('message', handleMessage);
+        socket.off('roomCreated'); socket.off('roomJoined'); socket.off('roomUpdated');
+        socket.off('gameInitialized'); socket.off('message'); socket.off('errorJoining');
     };
   }, [roomId, playerName, isCreator, router]);
 
-  const startGame = () => {
-    if (!currentRoom) return;
-    socket.emit('startGame', { roomId: currentRoom.id });
-  };
+  const startGame = () => currentRoom && socket.emit('startGame', { roomId: currentRoom.id });
+  const addBot = () => currentRoom && socket.emit('addBot', { roomId: currentRoom.id });
 
-  const addBot = () => {
-    if (!currentRoom) return;
-    socket.emit('addBot', { roomId: currentRoom.id });
+  const copyCode = () => {
+    navigator.clipboard.writeText(roomId);
+    alert('Código copiado al portapapeles');
   };
 
   return (
-    <div className="flex flex-col items-center min-h-screen bg-gradient-to-b from-blue-100 to-green-100 p-8">
-      <div className="bg-white rounded-2xl p-6 shadow-xl w-full max-w-lg">
-        <h1 className="text-3xl font-bold text-center mb-4">
-          🎲 Sala <span className="text-blue-600">{roomId}</span>
-        </h1>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-6 font-sans">
+      
+      {/* Header Sala */}
+      <div className="text-center mb-8">
+        <h2 className="text-gray-400 font-bold tracking-widest uppercase text-xs mb-2">Sala de Espera</h2>
+        <div 
+            onClick={copyCode}
+            className="inline-flex items-center gap-3 bg-white px-6 py-3 rounded-2xl shadow-sm border border-gray-200 cursor-pointer hover:border-blue-400 transition-colors group"
+        >
+            <span className="text-4xl font-black text-gray-800 tracking-wider">{roomId}</span>
+            <svg className="w-5 h-5 text-gray-400 group-hover:text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+        </div>
+        <p className="text-gray-400 text-xs mt-2">Toca el código para copiar y compartir</p>
+      </div>
 
-        {currentRoom ? (
-          <div className="border border-blue-400 rounded-xl p-4 bg-white mb-4">
-            <h2 className="font-semibold text-lg mb-2 text-blue-800">Jugadores ({currentRoom.players.length}/4):</h2>
-            <ul className="space-y-1">
-              {currentRoom.players.map(p => (
-                <li key={p.id} className="font-semibold flex items-center gap-2">
-                  <div
-                    style={{
-                      width: 14,
-                      height: 14,
-                      borderRadius: 7,
-                      background: p.color,
-                      border: '2px solid black',
-                    }}
-                  />
-                  <span style={{ color: p.color }}>{p.name}</span>
-                  {p.id.startsWith('BOT-') && <span className="text-xs bg-gray-200 px-2 rounded-full text-gray-600">BOT</span>}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-2 text-sm text-gray-500">
-              Estado: <b>{currentRoom.status}</b>
-            </p>
-
-            {/* CONTROLES DEL CREADOR */}
-            {isCreator && !isGameStarted && (
-                <div className="flex flex-col gap-2 mt-4">
-                    {currentRoom.players.length < 4 && (
-                        <button
-                            onClick={addBot}
-                            className="w-full py-2 border-2 border-dashed border-gray-400 text-gray-600 rounded-xl font-bold hover:bg-gray-50 transition-colors"
-                        >
-                            🤖 Añadir Bot
-                        </button>
-                    )}
-                    
-                    {currentRoom.players.length >= 2 && (
-                        <button
-                            onClick={startGame}
-                            className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold shadow-md transition-transform active:scale-95"
-                        >
-                            🎮 Iniciar Juego
-                        </button>
+      {/* Grid de Jugadores (Metáfora del Ludo) */}
+      <div className="grid grid-cols-2 gap-4 w-full max-w-md mb-8">
+        {Array.from({ length: 4 }).map((_, i) => {
+            const player = currentRoom?.players[i];
+            // Asignar colores fijos a las posiciones si quieres, o dinámicos según el jugador
+            const slotColor = player ? colorMap[player.color] : 'bg-gray-100';
+            const borderColor = player ? `border-${player.color}-500` : 'border-dashed border-gray-300';
+            
+            return (
+                <div key={i} className={`relative h-32 rounded-2xl border-2 ${player ? 'border-transparent shadow-lg bg-white' : 'border-dashed border-gray-200 bg-gray-50'} flex flex-col items-center justify-center transition-all`}>
+                    {player ? (
+                        <>
+                            <div className={`w-12 h-12 rounded-full mb-2 ${colorMap[player.color]} shadow-inner flex items-center justify-center text-white font-bold text-lg`}>
+                                {player.name.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="font-bold text-gray-800 truncate w-full text-center px-2">{player.name}</span>
+                            {player.id.startsWith('BOT-') && <span className="text-[10px] font-bold bg-gray-100 px-2 py-0.5 rounded text-gray-500 mt-1">BOT</span>}
+                        </>
+                    ) : (
+                        <span className="text-gray-300 font-medium text-sm">Vacío</span>
                     )}
                 </div>
-            )}
-            
-            {!isCreator && (
-                <p className="text-center text-gray-500 mt-4 italic">Esperando al anfitrión...</p>
-            )}
+            );
+        })}
+      </div>
 
-          </div>
+      {/* Controles */}
+      <div className="w-full max-w-md space-y-3">
+        {currentRoom ? (
+            <>
+                {isCreator ? (
+                    <div className="flex flex-col gap-3">
+                        <div className="flex gap-3">
+                             <button 
+                                onClick={addBot} 
+                                disabled={currentRoom.players.length >= 4}
+                                className="flex-1 py-3 bg-white border border-gray-300 text-gray-600 rounded-xl font-bold hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                             >
+                                + Bot
+                             </button>
+                             {/* Aquí podrías poner botón de expulsar o ajustes */}
+                        </div>
+
+                        <button 
+                            onClick={startGame}
+                            disabled={currentRoom.players.length < 2}
+                            className="w-full py-4 bg-gray-900 text-white rounded-xl font-bold text-lg shadow-lg hover:shadow-xl hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                            {currentRoom.players.length < 2 ? 'Esperando jugadores...' : 'Comenzar Partida'}
+                        </button>
+                    </div>
+                ) : (
+                    <div className="bg-white p-4 rounded-xl text-center border border-gray-100 shadow-sm">
+                        <div className="animate-pulse flex justify-center mb-2">
+                             <span className="w-2 h-2 bg-blue-500 rounded-full mx-1"></span>
+                             <span className="w-2 h-2 bg-blue-500 rounded-full mx-1 animation-delay-200"></span>
+                             <span className="w-2 h-2 bg-blue-500 rounded-full mx-1 animation-delay-400"></span>
+                        </div>
+                        <p className="text-gray-500 font-medium">Esperando al líder...</p>
+                    </div>
+                )}
+            </>
         ) : (
-          <p className="text-center p-4">Cargando sala...</p>
+             <p className="text-gray-400">Conectando...</p>
         )}
       </div>
 
-      <div className="w-full max-w-lg mt-6">
-        <h3 className="font-bold text-blue-800">Mensajes</h3>
-        <ul className="border border-blue-400 bg-white p-3 rounded-xl h-40 overflow-y-auto custom-scrollbar-elegant">
-          {messages.map((m, i) => (
-            <li key={i} className="text-sm border-b border-gray-100 last:border-0 py-1">{m}</li>
-          ))}
-        </ul>
+      {/* Mini Log */}
+      <div className="fixed bottom-4 left-0 w-full px-6 pointer-events-none">
+         <div className="max-w-md mx-auto flex flex-col items-center gap-1">
+             {messages.slice(0, 3).map((m, i) => (
+                 <div key={i} className="bg-black/70 backdrop-blur text-white text-xs px-3 py-1.5 rounded-full shadow-sm animate-fade-in">
+                     {m}
+                 </div>
+             ))}
+         </div>
       </div>
 
-      <style jsx global>{`
-        .custom-scrollbar-elegant::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar-elegant::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.2); border-radius: 10px; }
-      `}</style>
     </div>
   );
 }

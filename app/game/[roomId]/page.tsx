@@ -4,13 +4,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import socket from '../../lib/socket';
 
-interface Player {
-  id: string;
-  name: string;
-  color: 'red' | 'blue' | 'green' | 'yellow';
-  pieces: number[];
-}
-
 // --- CONFIGURACIÓN VISUAL ---
 const homePositions: Record<string, { left: string; top: string }[]> = {
   green: [{ left: '16%', top: '16%' }, { left: '27%', top: '16%' }, { left: '16%', top: '27%' }, { left: '27%', top: '27%' }],
@@ -46,6 +39,8 @@ const getBoardCoords = (pos: number): { left: string, top: string } | null => {
     return null;
 };
 
+interface Player { id: string; name: string; color: string; pieces: number[]; }
+
 export default function GamePage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -60,18 +55,10 @@ export default function GamePage() {
   const [winners, setWinners] = useState<string[]>([]);
   const [killAlert, setKillAlert] = useState<{killer: string, victim: string} | null>(null);
 
-  const pushMsg = (msg: string) => {
-    setMessages(prev => [msg, ...prev].slice(0, 50));
-  };
-
-  const playSound = (type: 'dice' | 'move' | 'kill' | 'win') => {
-    try {
-        const audio = new Audio(`/${type}.mp3`);
-        audio.volume = 0.5;
-        audio.play().catch(e => console.log("Audio play failed (user interaction needed first)", e));
-    } catch (e) {
-        console.log("No audio file found");
-    }
+  const pushMsg = (msg: string) => setMessages(prev => [msg, ...prev].slice(0, 5));
+  
+  const playSound = (type: string) => {
+    try { new Audio(`/${type}.mp3`).play().catch(() => {}); } catch {}
   };
 
   const joinAndSync = useCallback(() => {
@@ -81,251 +68,157 @@ export default function GamePage() {
   }, [roomId, playerName]);
 
   useEffect(() => {
-    if (socket.connected) {
-      joinAndSync();
-    } else {
-      socket.on('connect', joinAndSync);
-    }
+    if (socket.connected) joinAndSync(); else socket.on('connect', joinAndSync);
 
-    const handleGameState = (state: any) => {
-      if (state.players) setPlayers(state.players);
-      setDice(state.dice);
-      setServerTurnIndex(state.turnIndex);
-      if (state.winners) {
-        setWinners(state.winners);
-        if(state.status === 'finished') playSound('win');
-      }
-    };
+    socket.on('game_state', (s) => {
+        if (s.players) setPlayers(s.players);
+        setDice(s.dice);
+        setServerTurnIndex(s.turnIndex);
+        if (s.winners) { setWinners(s.winners); if (s.status === 'finished') playSound('win'); }
+    });
+    socket.on('diceRolled', ({value}) => { setDice(value); playSound('dice'); });
+    socket.on('pieceMoved', () => playSound('move'));
+    socket.on('killEvent', (d) => { setKillAlert(d); playSound('kill'); setTimeout(() => setKillAlert(null), 3500); });
+    socket.on('turnChanged', ({turnIndex}) => setServerTurnIndex(turnIndex));
+    socket.on('message', (m) => pushMsg(m));
+    socket.on('error', (m) => pushMsg(`❌ ${m}`));
 
-    const handleDiceRolled = ({ value }: { value: number }) => {
-      setDice(value);
-      playSound('dice');
-    };
-    
-    const handlePieceMoved = () => {
-        playSound('move');
-    };
-
-    const handleKillEvent = (data: {killer: string, victim: string}) => {
-        setKillAlert(data);
-        playSound('kill');
-        setTimeout(() => setKillAlert(null), 3000);
-    };
-
-    const handleTurnChanged = ({ turnIndex }: { turnIndex: number }) => {
-      setServerTurnIndex(turnIndex);
-    };
-
-    const handleServerMessage = (msg: string) => pushMsg(`📢 ${msg}`);
-    const handleError = (msg: string) => pushMsg(`❌ ${msg}`);
-
-    socket.on('game_state', handleGameState);
-    socket.on('diceRolled', handleDiceRolled);
-    socket.on('pieceMoved', handlePieceMoved);
-    socket.on('killEvent', handleKillEvent);
-    socket.on('turnChanged', handleTurnChanged);
-    socket.on('message', handleServerMessage);
-    socket.on('error', handleError);
-    socket.on('errorJoining', handleError);
-
-    return () => {
-      socket.off('connect', joinAndSync);
-      socket.off('game_state', handleGameState);
-      socket.off('diceRolled', handleDiceRolled);
-      socket.off('pieceMoved', handlePieceMoved);
-      socket.off('killEvent', handleKillEvent);
-      socket.off('turnChanged', handleTurnChanged);
-      socket.off('message', handleServerMessage);
-      socket.off('error', handleError);
-      socket.off('errorJoining', handleError);
-    };
+    return () => { socket.off('connect'); socket.off('game_state'); socket.off('diceRolled'); socket.off('pieceMoved'); socket.off('killEvent'); socket.off('turnChanged'); socket.off('message'); socket.off('error'); };
   }, [joinAndSync]);
 
-  const rollDice = () => {
-    socket.emit('rollDice', { roomId });
-  };
-
-  const movePiece = (playerId: string, pieceIndex: number) => {
-    if (playerId !== myId) return; 
-    const currentServerPlayer = players[serverTurnIndex];
-    if (currentServerPlayer?.id !== myId) return;
-    socket.emit('movePiece', { roomId, playerId, pieceIndex });
+  const rollDice = () => socket.emit('rollDice', { roomId });
+  const movePiece = (pid: string, idx: number) => {
+    if (pid !== myId || players[serverTurnIndex]?.id !== myId) return;
+    socket.emit('movePiece', { roomId, playerId: pid, pieceIndex: idx });
   };
 
   const currentServerPlayer = players[serverTurnIndex];
   const isMyTurn = myId && currentServerPlayer?.id === myId;
-  const myPlayer = players.find(p => p.id === myId);
   const isGameFinished = players.length > 0 && winners.length >= players.length - 1;
 
+  // --- RENDERIZADO RESPONSIVO ---
+  // Usamos Flexbox vertical (h-screen) para asegurar que el tablero y los controles nunca se superpongan.
   return (
-    <div className="min-h-screen flex flex-col items-center bg-green-50 p-4 relative overflow-hidden font-sans">
+    <div className="flex flex-col h-[100dvh] w-full bg-gray-50 text-gray-800 font-sans overflow-hidden">
       
-      {/* ALERTA DE KILL */}
+      {/* 1. ALERTAS FLOTANTES (Z-INDEX ALTO) */}
       {killAlert && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-            <div className="bg-red-600 text-white px-8 py-6 rounded-3xl shadow-[0_0_50px_rgba(255,0,0,0.5)] animate-[bounce_0.5s_infinite] border-4 border-yellow-400">
-                <h2 className="text-4xl font-black uppercase italic drop-shadow-md text-center">
-                    ⚔️ ¡ATAQUE! ⚔️
-                </h2>
-                <p className="text-2xl mt-2 text-center font-bold">
-                    <span className="text-yellow-300">{killAlert.killer}</span> destrozó a <span className="text-black/50">{killAlert.victim}</span>
-                </p>
+        <div className="fixed top-1/4 left-0 w-full z-50 flex justify-center pointer-events-none animate-bounce">
+            <div className="bg-red-500/90 backdrop-blur-md text-white px-8 py-4 rounded-2xl shadow-2xl border-2 border-red-400 flex flex-col items-center">
+                <span className="text-4xl mb-1">⚔️</span>
+                <div className="text-lg font-bold uppercase tracking-wider">¡Aniquilado!</div>
+                <div className="text-sm opacity-90">
+                    <span className="font-black text-yellow-300">{killAlert.killer}</span> eliminó a {killAlert.victim}
+                </div>
             </div>
         </div>
       )}
 
-      {/* HUD Superior */}
-      <div className="w-full max-w-3xl flex justify-between items-center bg-white/90 backdrop-blur-md p-4 rounded-2xl shadow-xl mb-6 sticky top-4 z-20 border border-white/50">
-        <div>
-          <h1 className="text-xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-green-600">Sala: {roomId}</h1>
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100 border border-gray-200 shadow-sm">
-               <div style={{width: 14, height: 14, borderRadius: '50%', background: myPlayer?.color || 'gray', boxShadow: 'inset 0 0 4px rgba(0,0,0,0.3)'}}></div>
-               <span className="font-bold text-gray-700">{myPlayer?.name || playerName}</span>
-            </div>
-          </div>
+      {/* 2. HEADER (TOP BAR) - NO FIXED, PARTE DEL FLUJO */}
+      <header className="flex-none p-4 flex justify-between items-center z-10">
+        <div className="bg-white/80 backdrop-blur px-4 py-2 rounded-xl shadow-sm border border-gray-200">
+             <h1 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Sala</h1>
+             <p className="font-mono font-bold text-gray-700 text-sm">{roomId}</p>
         </div>
 
-        {isGameFinished ? (
-            <div className="text-xl font-extrabold text-purple-600 animate-bounce">
-                ¡Juego Terminado!
-            </div>
-        ) : (
-            <div className="flex flex-col items-end">
-            <div className="text-xs uppercase tracking-wider text-gray-500 mb-1 font-semibold">Turno de:</div>
-            <div className={`flex items-center gap-2 text-lg font-bold transition-all ${isMyTurn ? 'scale-110' : ''}`}>
-                <div className={`w-5 h-5 rounded-full border-2 border-white shadow-md transition-all ${isMyTurn ? 'animate-pulse shadow-yellow-400/50' : ''}`} style={{background: currentServerPlayer?.color || 'gray'}}></div>
-                <span className={isMyTurn ? 'text-blue-700' : 'text-gray-800'}>{currentServerPlayer?.name || 'Esperando...'}</span>
-            </div>
+        {!isGameFinished && (
+            <div className="bg-white/90 backdrop-blur px-4 py-2 rounded-full shadow-lg border border-gray-100 flex items-center gap-3 transition-all">
+                <div className="text-right">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase">Turno</p>
+                    <p className="font-bold text-gray-800 text-sm leading-none">{currentServerPlayer?.name}</p>
+                </div>
+                <div className="w-8 h-8 rounded-full border-2 border-gray-100 shadow-inner" style={{background: currentServerPlayer?.color || '#eee'}}></div>
             </div>
         )}
-      </div>
+      </header>
 
-      {/* Área de Juego Central */}
-      <div className="flex flex-col md:flex-row gap-8 items-center justify-center w-full max-w-5xl">
-        
-        {/* Tablero Contenedor */}
-        <div className="relative flex-shrink-0 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.3)] bg-white p-2 border-4 border-gray-800/80">
-            <div className="relative w-[340px] h-[340px] sm:w-[480px] sm:h-[480px] md:w-[520px] md:h-[520px] select-none rounded-2xl overflow-hidden">
-            <img src="/ludo-board.png" className="w-full h-full object-contain pointer-events-none" alt="Tablero" />
-
-            {players.map(p =>
-                p.pieces.map((pos, idx) => {
-                const key = `${p.id}-${idx}`;
+      {/* 3. ÁREA DE JUEGO (SE EXPANDE) */}
+      <main className="flex-1 relative w-full flex items-center justify-center p-2 min-h-0">
+        {/* Contenedor del tablero que mantiene la proporción cuadrada y se ajusta al espacio disponible */}
+        <div className="relative aspect-square h-auto w-auto max-h-full max-w-full shadow-2xl rounded-[15%] bg-white p-2 border border-gray-200">
+            <div className="relative w-full h-full select-none rounded-[12%] overflow-hidden bg-gray-50">
+                <img src="/ludo-board.png" className="w-full h-full object-contain pointer-events-none opacity-90 mix-blend-multiply" alt="Tablero" />
                 
-                const isMine = p.id === myId;
-                
-                let coord;
-                if (pos === -1) { coord = homePositions[p.color][idx]; } else { coord = getBoardCoords(pos); }
-                if (!coord) return null;
+                {/* FICHAS */}
+                {players.map(p => p.pieces.map((pos, idx) => {
+                    const isMine = p.id === myId;
+                    const coord = (pos === -1) ? homePositions[p.color][idx] : getBoardCoords(pos);
+                    if (!coord) return null;
+                    const isMovable = isMine && isMyTurn && dice !== null && (pos !== -1 || dice === 6 || dice === 1) && !winners.includes(p.id);
 
-                // --- ACTUALIZACIÓN DE REGLA VISUAL ---
-                // Ahora se permite mover si dice === 1 || dice === 6
-                const isMovable = isMine && isMyTurn && dice !== null && 
-                                  (pos !== -1 || dice === 6 || dice === 1) && 
-                                  !winners.includes(p.id);
-                                  
-                const isWinnerPiece = pos >= 100 && (pos % 100 === 5);
-
-                return (
-                    <div
-                    key={key}
-                    onClick={() => isMine && movePiece(p.id, idx)}
-                    className={`absolute flex justify-center items-center transition-all duration-300 ease-out
-                        ${isMovable ? 'cursor-pointer z-30 hover:scale-110 hover:-translate-y-1' : 'z-10'}
-                        ${isWinnerPiece ? 'z-10 scale-75 opacity-80' : ''}
-                    `}
-                    style={{
-                        left: coord.left, top: coord.top, width: '6.5%', height: '6.5%', transform: 'translate(-50%, -50%)',
-                    }}
-                    >
-                        <div 
-                            className={`w-full h-full rounded-full border-[2.5px] border-white shadow-[inset_0_2px_4px_rgba(0,0,0,0.4),0_4px_8px_rgba(0,0,0,0.3)] relative
-                            ${isMovable ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-transparent' : ''}`}
-                            style={{ backgroundColor: p.color }}
+                    return (
+                        <div key={`${p.id}-${idx}`}
+                             onClick={() => isMovable && movePiece(p.id, idx)}
+                             className={`absolute flex justify-center items-center transition-all duration-300 ease-out
+                                ${isMovable ? 'cursor-pointer z-50 hover:scale-125' : 'z-20'}
+                             `}
+                             style={{ left: coord.left, top: coord.top, width: '6%', height: '6%', transform: 'translate(-50%, -50%)' }}
                         >
-                            <div className="absolute top-1 left-1/2 -translate-x-1/2 w-2/3 h-1/3 bg-gradient-to-b from-white/70 to-transparent rounded-full"></div>
+                            <div className={`w-full h-full rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.3)] relative border-2 border-white/50 ${isMovable ? 'animate-pulse ring-2 ring-yellow-400/80 scale-110' : ''}`} style={{background: p.color}}>
+                                <div className="absolute top-1 left-1.5 w-1/3 h-1/3 bg-white/40 rounded-full blur-[1px]"></div>
+                            </div>
                         </div>
-                        {isMovable && <span className="absolute inset-0 w-full h-full rounded-full animate-ping bg-yellow-400 opacity-40"></span>}
-                    </div>
-                );
-                })
-            )}
+                    );
+                }))}
             </div>
         </div>
+      </main>
 
-        {/* Controles y Chat */}
-        <div className="flex flex-col gap-4 w-full max-w-sm md:w-72 md:self-stretch">
-          <div className="bg-white/90 backdrop-blur p-5 rounded-2xl shadow-xl text-center border border-white/50 flex flex-col justify-between min-h-[180px]">
-             {!isGameFinished && (
-                 <>
-                    <div className="mb-4 flex-1 flex items-center justify-center bg-gray-50/80 rounded-xl border border-gray-100 relative overflow-hidden group">
-                        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-green-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                        {dice ? (
-                        <span key={dice} className="text-6xl font-black text-gray-800 drop-shadow-lg animate-[bounce_0.5s_ease-out]">{dice}</span>
-                        ) : (
-                        <div className="text-gray-400 text-sm flex flex-col items-center gap-1">
-                            <span className="text-3xl opacity-50">🎲</span>
-                            Esperando tiro...
-                        </div>
-                        )}
-                    </div>
-
-                    <button
-                    onClick={rollDice}
-                    disabled={!isMyTurn || dice !== null}
-                    className={`w-full py-4 rounded-xl font-extrabold text-lg shadow-md transition-all transform relative overflow-hidden
-                        ${isMyTurn && dice === null 
-                        ? 'bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 text-white hover:scale-[1.02] active:scale-95 hover:shadow-lg hover:shadow-orange-500/30' 
-                        : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
-                    >
-                        <div className="relative z-10 flex items-center justify-center gap-2">
-                        {isMyTurn 
-                            ? (dice !== null ? '¡Mueve tu ficha!' : <><span>🎲</span> ¡TIRAR DADO!</>) 
-                            : <>⏳ Espera a {currentServerPlayer?.name?.split(' ')[0]}</>
-                        }
-                        </div>
-                        {isMyTurn && dice === null && <div className="absolute inset-0 bg-white/20 animate-pulse"></div>}
-                    </button>
-                 </>
-             )}
-
-             {isGameFinished && (
-                 <div className="flex-1 flex flex-col items-center justify-center">
-                     <h2 className="text-2xl font-bold mb-2">🏆 Ganadores</h2>
-                     <ul className="space-y-1">
-                         {winners.map((id, idx) => {
-                             const p = players.find(pl => pl.id === id);
-                             return <li key={id} className="font-bold" style={{color: p?.color}}>#{idx+1} {p?.name}</li>
-                         })}
-                     </ul>
+      {/* 4. CONTROLES (BOTTOM BAR) - PARTE DEL FLUJO, NO TAPA NADA */}
+      <footer className="flex-none w-full max-w-md mx-auto p-4 z-20">
+         
+         {/* Mensajes Flotantes (pequeños encima del control) */}
+         <div className="h-6 mb-2 overflow-hidden flex flex-col items-center justify-end">
+             {messages.length > 0 && (
+                 <div className="bg-black/70 text-white text-[10px] px-3 py-1 rounded-full backdrop-blur animate-fade-in-up">
+                     {messages[0]}
                  </div>
              )}
-          </div>
+         </div>
 
-          <div className="bg-white/90 backdrop-blur p-3 rounded-2xl shadow-lg flex-1 h-48 md:h-auto flex flex-col border border-white/50">
-            <h3 className="text-xs font-extrabold text-gray-500 uppercase mb-2 tracking-widest ml-1">Historial</h3>
-            <ul className="flex-1 overflow-y-auto text-sm space-y-1.5 pr-1 custom-scrollbar-elegant bg-gray-50/50 rounded-lg p-2">
-              {messages.map((m, i) => {
-                const isError = m.startsWith('❌');
-                const isImportat = m.startsWith('📢');
-                return (
-                    <li key={i} className={`pb-1 border-b border-gray-100 last:border-0 ${isError ? 'text-red-600 font-medium' : (isImportat ? 'text-blue-700 font-medium' : 'text-gray-600')}`}>
-                        {m}
-                    </li>
-                )
-              })}
-            </ul>
-          </div>
-        </div>
-      </div>
-      
-      <style jsx global>{`
-        .custom-scrollbar-elegant::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar-elegant::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar-elegant::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.1); border-radius: 10px; }
-        .custom-scrollbar-elegant::-webkit-scrollbar-thumb:hover { background-color: rgba(0, 0, 0, 0.2); }
-      `}</style>
+         <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 p-3 flex items-center justify-between gap-4">
+             {/* DADO */}
+             <div className="flex flex-col items-center justify-center w-16 h-16 bg-gray-50 rounded-xl border border-gray-100 shadow-inner relative overflow-hidden">
+                 {dice ? (
+                     <span key={dice} className="text-4xl font-black text-gray-800 animate-[bounce_0.4s]">{dice}</span>
+                 ) : (
+                     <span className="text-2xl opacity-20">🎲</span>
+                 )}
+             </div>
+
+             {/* BOTÓN DE ACCIÓN */}
+             <div className="flex-1">
+                 {!isGameFinished ? (
+                     <button
+                        onClick={rollDice}
+                        disabled={!isMyTurn || dice !== null}
+                        className={`w-full h-16 rounded-xl font-black text-lg tracking-wide shadow-lg transition-all transform active:scale-95 flex flex-col items-center justify-center
+                            ${isMyTurn && dice === null 
+                                ? 'bg-gray-900 text-white hover:bg-black' 
+                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                     >
+                        {isMyTurn ? (dice !== null ? '¡MUEVE!' : 'TIRAR') : 'ESPERA'}
+                        <span className="text-[9px] font-normal opacity-60 uppercase tracking-widest -mt-0.5">
+                            {isMyTurn ? (dice !== null ? 'Selecciona ficha' : 'Tu turno') : 'Turno del oponente'}
+                        </span>
+                     </button>
+                 ) : (
+                     <div className="text-center h-16 flex flex-col justify-center">
+                         <h3 className="font-bold text-gray-800 text-sm">¡Finalizado!</h3>
+                         <div className="flex justify-center gap-1 mt-1">
+                             {winners.map((w, i) => (
+                                 <div key={i} className="w-5 h-5 rounded-full border border-white shadow-md flex items-center justify-center text-[10px] font-bold text-white" 
+                                      style={{background: players.find(p=>p.id===w)?.color}}>
+                                     {i+1}
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                 )}
+             </div>
+         </div>
+      </footer>
+
     </div>
   );
 }

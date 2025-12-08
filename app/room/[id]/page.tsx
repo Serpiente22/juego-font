@@ -43,7 +43,7 @@ export default function RoomPage() {
     };
 
     const handleRoomUpdated = (room: Room) => {
-      // eliminar duplicados
+      // eliminar duplicados visuales si los hubiera
       const unique = room.players.filter(
         (p, i, arr) => arr.findIndex(x => x.id === p.id) === i
       );
@@ -59,11 +59,14 @@ export default function RoomPage() {
       }, 400);
     };
 
+    const handleMessage = (msg: string) => log(`📢 ${msg}`);
+
     socket.on('roomCreated', handleRoomCreated);
     socket.on('roomJoined', handleRoomJoined);
     socket.on('roomUpdated', handleRoomUpdated);
     socket.on('errorJoining', handleErrorJoining);
     socket.on('gameInitialized', handleGameInitialized);
+    socket.on('message', handleMessage);
 
     // Si no es creador, unirse automáticamente
     if (!isCreator && playerName) {
@@ -78,12 +81,18 @@ export default function RoomPage() {
       socket.off('roomUpdated', handleRoomUpdated);
       socket.off('errorJoining', handleErrorJoining);
       socket.off('gameInitialized', handleGameInitialized);
+      socket.off('message', handleMessage);
     };
   }, [roomId, playerName, isCreator, router]);
 
   const startGame = () => {
     if (!currentRoom) return;
     socket.emit('startGame', { roomId: currentRoom.id });
+  };
+
+  const addBot = () => {
+    if (!currentRoom) return;
+    socket.emit('addBot', { roomId: currentRoom.id });
   };
 
   return (
@@ -95,7 +104,7 @@ export default function RoomPage() {
 
         {currentRoom ? (
           <div className="border border-blue-400 rounded-xl p-4 bg-white mb-4">
-            <h2 className="font-semibold text-lg mb-2 text-blue-800">Jugadores:</h2>
+            <h2 className="font-semibold text-lg mb-2 text-blue-800">Jugadores ({currentRoom.players.length}/4):</h2>
             <ul className="space-y-1">
               {currentRoom.players.map(p => (
                 <li key={p.id} className="font-semibold flex items-center gap-2">
@@ -109,36 +118,60 @@ export default function RoomPage() {
                     }}
                   />
                   <span style={{ color: p.color }}>{p.name}</span>
-                  <span className="text-gray-600">({p.color})</span>
+                  {p.id.startsWith('BOT-') && <span className="text-xs bg-gray-200 px-2 rounded-full text-gray-600">BOT</span>}
                 </li>
               ))}
             </ul>
-            <p className="mt-2">
+            <p className="mt-2 text-sm text-gray-500">
               Estado: <b>{currentRoom.status}</b>
             </p>
 
-            {currentRoom.players.length >= 2 && !isGameStarted && isCreator && (
-              <button
-                onClick={startGame}
-                className="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-xl font-bold"
-              >
-                🎮 Iniciar Juego
-              </button>
+            {/* CONTROLES DEL CREADOR */}
+            {isCreator && !isGameStarted && (
+                <div className="flex flex-col gap-2 mt-4">
+                    {currentRoom.players.length < 4 && (
+                        <button
+                            onClick={addBot}
+                            className="w-full py-2 border-2 border-dashed border-gray-400 text-gray-600 rounded-xl font-bold hover:bg-gray-50 transition-colors"
+                        >
+                            🤖 Añadir Bot
+                        </button>
+                    )}
+                    
+                    {currentRoom.players.length >= 2 && (
+                        <button
+                            onClick={startGame}
+                            className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold shadow-md transition-transform active:scale-95"
+                        >
+                            🎮 Iniciar Juego
+                        </button>
+                    )}
+                </div>
             )}
+            
+            {!isCreator && (
+                <p className="text-center text-gray-500 mt-4 italic">Esperando al anfitrión...</p>
+            )}
+
           </div>
         ) : (
-          <p>Cargando sala...</p>
+          <p className="text-center p-4">Cargando sala...</p>
         )}
       </div>
 
       <div className="w-full max-w-lg mt-6">
         <h3 className="font-bold text-blue-800">Mensajes</h3>
-        <ul className="border border-blue-400 bg-white p-3 rounded-xl h-40 overflow-y-auto">
+        <ul className="border border-blue-400 bg-white p-3 rounded-xl h-40 overflow-y-auto custom-scrollbar-elegant">
           {messages.map((m, i) => (
-            <li key={i}>{m}</li>
+            <li key={i} className="text-sm border-b border-gray-100 last:border-0 py-1">{m}</li>
           ))}
         </ul>
       </div>
+
+      <style jsx global>{`
+        .custom-scrollbar-elegant::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar-elegant::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.2); border-radius: 10px; }
+      `}</style>
     </div>
   );
 }

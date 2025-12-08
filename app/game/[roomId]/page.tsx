@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import socket from '../../lib/socket';
 
@@ -11,9 +11,7 @@ interface Player {
   pieces: number[];
 }
 
-// ... (CONFIGURACIÓN VISUAL homePositions y getBoardCoords IGUAL QUE ANTES)
-// MANTÉN TUS VARIABLES homePositions y getBoardCoords AQUÍ SIN CAMBIOS
-// (No las repito para ahorrar espacio, pero no las borres)
+// --- CONFIGURACIÓN VISUAL ---
 const homePositions: Record<string, { left: string; top: string }[]> = {
   green: [{ left: '16%', top: '16%' }, { left: '27%', top: '16%' }, { left: '16%', top: '27%' }, { left: '27%', top: '27%' }],
   yellow: [{ left: '73%', top: '16%' }, { left: '84%', top: '16%' }, { left: '73%', top: '27%' }, { left: '84%', top: '27%' }],
@@ -22,8 +20,6 @@ const homePositions: Record<string, { left: string; top: string }[]> = {
 };
 
 const getBoardCoords = (pos: number): { left: string, top: string } | null => {
-    // ... PEGA AQUÍ LA FUNCIÓN getBoardCoords QUE TE DI EN LA RESPUESTA ANTERIOR (LA CORREGIDA)
-    // Es muy larga para repetirla, pero usa exactamente la misma.
     const unit = 100 / 15;
     const half = unit / 2;
     const cell = (col: number, row: number) => ({ left: `${col * unit + half}%`, top: `${row * unit + half}%` });
@@ -62,15 +58,12 @@ export default function GamePage() {
   const [myId, setMyId] = useState<string | null>(null);
   const [messages, setMessages] = useState<string[]>([]);
   const [winners, setWinners] = useState<string[]>([]);
-  
-  // ESTADO PARA ALERTAS DE KILL
   const [killAlert, setKillAlert] = useState<{killer: string, victim: string} | null>(null);
 
   const pushMsg = (msg: string) => {
     setMessages(prev => [msg, ...prev].slice(0, 50));
   };
 
-  // Función simple para reproducir sonidos
   const playSound = (type: 'dice' | 'move' | 'kill' | 'win') => {
     try {
         const audio = new Audio(`/${type}.mp3`);
@@ -113,11 +106,10 @@ export default function GamePage() {
         playSound('move');
     };
 
-    // NUEVO: Manejar evento de Kill
     const handleKillEvent = (data: {killer: string, victim: string}) => {
         setKillAlert(data);
         playSound('kill');
-        setTimeout(() => setKillAlert(null), 3000); // Ocultar alerta a los 3 seg
+        setTimeout(() => setKillAlert(null), 3000);
     };
 
     const handleTurnChanged = ({ turnIndex }: { turnIndex: number }) => {
@@ -129,8 +121,8 @@ export default function GamePage() {
 
     socket.on('game_state', handleGameState);
     socket.on('diceRolled', handleDiceRolled);
-    socket.on('pieceMoved', handlePieceMoved); // Escuchar movimiento para sonido
-    socket.on('killEvent', handleKillEvent); // Escuchar kill
+    socket.on('pieceMoved', handlePieceMoved);
+    socket.on('killEvent', handleKillEvent);
     socket.on('turnChanged', handleTurnChanged);
     socket.on('message', handleServerMessage);
     socket.on('error', handleError);
@@ -154,7 +146,6 @@ export default function GamePage() {
   };
 
   const movePiece = (playerId: string, pieceIndex: number) => {
-    // Seguridad Frontend extra: no dejar enviar evento si no es mío
     if (playerId !== myId) return; 
     const currentServerPlayer = players[serverTurnIndex];
     if (currentServerPlayer?.id !== myId) return;
@@ -169,7 +160,7 @@ export default function GamePage() {
   return (
     <div className="min-h-screen flex flex-col items-center bg-green-50 p-4 relative overflow-hidden font-sans">
       
-      {/* ALERTA DE KILL (Pop-up emocionante) */}
+      {/* ALERTA DE KILL */}
       {killAlert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
             <div className="bg-red-600 text-white px-8 py-6 rounded-3xl shadow-[0_0_50px_rgba(255,0,0,0.5)] animate-[bounce_0.5s_infinite] border-4 border-yellow-400">
@@ -222,21 +213,23 @@ export default function GamePage() {
                 p.pieces.map((pos, idx) => {
                 const key = `${p.id}-${idx}`;
                 
-                // --- CORRECCIÓN CLAVE AQUÍ: isMine ---
                 const isMine = p.id === myId;
                 
                 let coord;
                 if (pos === -1) { coord = homePositions[p.color][idx]; } else { coord = getBoardCoords(pos); }
                 if (!coord) return null;
 
-                // Ahora isMovable REQIERE isMine. Nadie puede ver movible la ficha de otro.
-                const isMovable = isMine && isMyTurn && dice !== null && (pos !== -1 || dice === 6) && !winners.includes(p.id);
+                // --- ACTUALIZACIÓN DE REGLA VISUAL ---
+                // Ahora se permite mover si dice === 1 || dice === 6
+                const isMovable = isMine && isMyTurn && dice !== null && 
+                                  (pos !== -1 || dice === 6 || dice === 1) && 
+                                  !winners.includes(p.id);
+                                  
                 const isWinnerPiece = pos >= 100 && (pos % 100 === 5);
 
                 return (
                     <div
                     key={key}
-                    // Si no es mía, el click no hace nada
                     onClick={() => isMine && movePiece(p.id, idx)}
                     className={`absolute flex justify-center items-center transition-all duration-300 ease-out
                         ${isMovable ? 'cursor-pointer z-30 hover:scale-110 hover:-translate-y-1' : 'z-10'}
